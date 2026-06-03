@@ -63,7 +63,7 @@ Para instalar la aplicación:
 **IMPORTANTE** los ficheros bajo la carpeta /etc/certmanager deben estar con permisos root:root y protegidos contra lectura/escritura pública
 
 - La instalación de certbot programa automáticamente un timer para ejecutar dicha aplicación de manera periódica. Puesto que en este caso certbot se ejecuta desde CertManager, hay que desactivar dicho timer:
-> sudo systemctl disable --now certbot.timer
+    > sudo systemctl disable --now certbot.timer
 
 ## Ejecución
 
@@ -99,6 +99,19 @@ Usage: ./certmanager.sh options
 
 ### Fichero de credenciales ACME (acme-creds.ini)
 
+En este fichero se guardan las diversas credenciales de uso del API ACME para conectarse al proveedor de certificados. La forma de obtener estas credenciales depende del proveedor:
+
+- *LetsEncrypt* no requiere de credenciales para trabajar con certbot, 
+pues usa autenticación interna. No obstante en el fichero acme-creds.ini necesitaremos una entrada para esta conexión (ver fichero de ejemplo)
+- Para el caso de *HARICA*, el usuario debe:
+    - Conectarse a la Web de Gestión de Harica https://cm.harica.gr/Login
+    - Iniciar sesión con su usuario/contraseña (academic login)
+    - En la pestaña "ACME" crear una cuenta ACME EAB
+    - Desplegando la vista de información de la cuenta, aparecen
+    los datos de *KeyID*, *HMAC Key* y *Server URL*, que deberán incorporarse
+    a este fichero **acme_creds.ini**
+
+El siguiente ejemplo ilustra una configuración típica:
 ```
 # acme_creds.ini
 # Fichero .ini que contiene las credenciales de acceso vía ACME
@@ -127,6 +140,7 @@ acme_email = "email.del.usuario@example.com"
 # ...
 #
 ```
+Es importante recordar que CertManager asocia certificados con usuarios; esto es, las operaciones relacionadas con un determinado certificado, se realizarán con las credenciales ACME de dicho usuario. Si manualmente se cambia el usuario en el fichero *sites.ini*, es posible que las operaciones de renove,delete o revoke con certificados emitidos por Harica resulten en error
 
 ### Configuración DNS ( plugin python3-certbot-dns-rfc2136 )
 
@@ -145,18 +159,42 @@ en el DNS
 Ejemplo de utilización:
 - Generar clave y guardar en el servidor dns
 
-`root@dns-server# tsig-keygen -a hmac-sha256 "ddns-key" > /etc/bind/ddns-key.conf`
+    > root@dns-server# tsig-keygen -a hmac-sha256 "ddns-key" > /etc/bind/ddns-key.conf
 
 - Con la utilidad tsig2ini.sh generar datos para el fichero ddns-keys.ini
 
-`root@certmgrhost# tsig2ini.sh dns.server.ip.addr /etc/bind/ddns-key.conf >> /etc/certmanager/ddns_keys.ini`
+    >root@certmgrhost# tsig2ini.sh dns.server.ip.addr /etc/bind/ddns-key.conf >> /etc/certmanager/ddns_keys.ini
 
 - En el fichero de zona nos aseguraremos que los campos CAA están correctamente
-  configurados para admitir el emisor de certificados que vayamos a utilizar
+  configurados para admitir el emisor de certificados que vayamos a utilizar:
 
-- Configurar el servidor DNS para que admita dns dinámico
+  >cat zone.example.com.db
 
-`root@dnsserver# vi /etc/bind/named.conf.local`
+```
+  ...
+ ; declaracion de CA's autorizadas para emitir certificados para example.com
+ IN CAA 0 issue "harica.gr"
+ IN CAA 0 issue "letsencrypt.org"
+ IN CAA 0 issue "fnmt.es"
+ IN CAA 0 issue "sectigo.com"
+ IN CAA 0 issue "digicert.com"
+ ; no permitir wildcard certificates
+ IN CAA 0 issuewild ";"
+ ; en caso de abuso, avisar
+ IN CAA 0 iodef "mailto:dnsmaster@example.com"
+  ...
+```
+  Algunas autoridades de certificación piden datos adicionales para los RR de tipo CAA, para poder realizar validación de origen de solicitud del certificado:
+```
+  example.com. IN CAA 0 issue "example.net; \
+     accounturi=https://example.net/account/1234; \
+     validationmethods=dns-01"
+```
+   Consultar cada caso concreto y editar la zona DNS acorde con dicho proveedor
+
+- En el fichero named.conf.local, incluímos en la zona los datos necesarios para poder admitir DNS updates
+
+    >root@dnsserver# vi /etc/bind/named.conf.local
 
 ```
 ...
@@ -181,9 +219,9 @@ zone "example.es" {
 ...
 ```
 
-En el ejemplo vemos que se pueden usar las opciones "allow-update", especificando host y clave, o bien la opción "update-policy" que permite un ajuste más fino por dominios y campos que se puedan actualizar
+En el ejemplo anterior vemos que se pueden usar las opciones "allow-update", especificando host y clave, o bien la opción "update-policy" que permite un ajuste más fino por dominios y campos que se puedan actualizar
 
-La estructura del fichero de claves ddns utilizado por certmanager.sh es la siguiente
+La estructura del fichero de utilizado por CertManager para gestionar las claves de gestión de DNS updates es la siguiente
 
 ```
 # Fichero ddns_keys.ini
@@ -202,9 +240,12 @@ dns_rfc2136_algorithm = "MAC-SHA256"
 dns_rfc2136_sign_query = false
 
 [key2]
+# Target DNS server (IPv4 or IPv6 address, not a hostname)
+dns_rfc2136_server = ....
 ...
 
 ```
+La opción *dns_rfc2136_sign_query* con valor true indica que se debe verificar que el servidor indicado es el SOA de la zona. Lo normal es dejarlo en false
 
 ### Configuración de la lista de certificados a gestionar
 
@@ -278,4 +319,6 @@ tal que sigue:
 0 6 * * 0 /usr/local/bin/certmanager.sh --renove-all --expire 30 --install --mail <certadmin@example.com>
 ...
 ```
+**NOTA** certbot instala por defecto un timer para la renovación automática de certificados. Es preciso deshabilitar este timer para poder utilizar correctamente CertManager.
+Consultar el apartado de Instalación para proceder.
 
