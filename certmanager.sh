@@ -86,9 +86,19 @@ log () {
 }
 
 # send message to log file AND console
-error() {
+error () {
 	echo "$*" >&2
 	echo "$*" >>${log_file}
+}
+
+# finaliza la ejecucion
+# $1: codigo de salida (0:ok, else error)
+# $2 mensaje de error
+die () {
+	exitcode=$1; shift
+	[ "${exitcode}" -ne 0 ] && error "$*"
+	rm -f "${lock_file}"
+	exit "${exitcode}"
 }
 
 # parse sites ini file to get information from cert
@@ -169,15 +179,12 @@ parse_creds () {
 	trace "enter parse_creds ('$1')"
 	user=$1
     if [ ! -f "$acme_creds" ]; then
-		error "ACME EAB credentials file '$acme_creds' does not exist" >&2
-		exit 1
+		die 1 "ACME EAB credentials file '$acme_creds' does not exist" 
     elif ! ini_validate "$acme_creds" ; then
 		# comprobamos si el fichero .ini es valido
-		error "ACME EAB credentials '$acme_creds' is not a valid .ini file" >&2
-		exit 1
+		die 1 "ACME EAB credentials '$acme_creds' is not a valid .ini file" 
     elif ! (ini_list_sections "$acme_creds" | grep -q "$user") ; then
-		error "User '$user' is not declared in '$acme_creds'"
-		exit 1;
+		die 1 "User '$user' is not declared in '$acme_creds'"
     else
 		# finalmente leemos credenciales
 		acme_kid=$(ini_read "$acme_creds" "$user" "acme_kid")
@@ -190,8 +197,7 @@ parse_creds () {
 			log "acme_hmac_key: $acme_hmac_key"
 			log "acme_server: $acme_server"
 			log "acme_email: $acme_email"
-			error "Incomplete ACME credentials data for user '$user'"
-			exit 1
+			die 1 "Incomplete ACME credentials data for user '$user'"
 		fi
     fi 
 }
@@ -199,15 +205,12 @@ parse_creds () {
 # extract ddns info and store in temporary file
 get_ddns_creds () {
 	if [ ! -f "${ddns_keys}" ]; then
-		error "DNS sites conf file \"${ddns_keys}\" does not exist" >&2
-		exit 1
+		die 1 "DNS sites conf file \"${ddns_keys}\" does not exist" 
     elif ! ini_validate "${ddns_keys}" ; then
 		# comprobamos si el fichero .ini es valido
-		error "DNS sites conf file \"${ddns_keys}\"is not a valid .ini file" >&2
-		exit 1
+		die 1 "DNS sites conf file \"${ddns_keys}\"is not a valid .ini file" 
     elif ! (ini_list_sections "${ddns_keys}" | grep -q "${ddns_credentials}") ; then
-		error "DNS section \"${ddns_credentials}\" is not declared in \"${ddns_keys}\""
-		exit 1;
+		die 1 "DNS section \"${ddns_credentials}\" is not declared in \"${ddns_keys}\""
     else
 		# finalmente procesamos los datos de la seccion
 		ini_get_all "${ddns_keys}" "${ddns_credentials}"
@@ -227,7 +230,7 @@ install_certificate () {
 	fi
 	fromdir="/etc/letsencrypt/live/${1}/"
 	${SCP} "${fromdir}/cert.pem" "${cert_host}":"${cert_path}/${1}_cert.pem"	
-	${SCP} "${fromdir}/key.pem" "${cert_host}":"${key_path}/${1}_key.pem"
+	${SCP} "${fromdir}/privkey.pem" "${cert_host}":"${key_path}/${1}_key.pem"
 	${SCP} "${fromdir}/fullchain.pem" "${cert_host}":"${chain_path}/${1}_chain.pem"
 	${SSH} "${cert_host}" update-ca-certificates
 }
@@ -271,29 +274,35 @@ do_list () {
 # $1: certificate CN name (section in ini file)
 do_create () {
 	trace "Enter do_create( '$1' )"
-	# parse sites ini file to retrieve certificate and credentials
-	parse_site "$1"
-	parse_creds "${acme_credentials}"
 
-	[ -z "${cert_alt_names}" ] || cert_alt_names="-d ${cert_alt_names}"
-	# extract ddns credentials from ddns_keys file
-	ddns_temp="${tmp_dir}/ddns_credentials.$$.ini"
-	get_ddns_creds > "${ddns_temp}"
-	# call to certbot. On LetsEncrypt remove eab-xxx related vars
-	if [ -n "${eab-kid}" ]; then
-		eab_data="--eab-kid ${acme_kid} --eab-hmac-key ${acme_hmac_key}"
-	fi 
+	# parse sites ini file to retrieve certificate and credentials
+	parse_site "$1" 
+	parse_creds "${acme_credentials}"
+	
+	# indicamos el CN y los SubjectAlternateNames
+	domains="-d $1 "
+	[ -n "${cert_alt_names}" ] && domains="-d ${1} -d ${cert_alt_names/,/ -d /}"
+	
+	# extract ddns credentials from ddns_keys file. Notice perms
+	ddns_temp="${tmp_dir}/ddns_create.$$.ini"
+	get_ddns_creds > "${ddns_temp}" && chmod 640 "${ddns_temp}"
+
+	# On LetsEncrypt remove eab-xxx related vars
+	[ -n "${eab-kid}" ]	&& eab_data="--eab-kid ${acme_kid} --eab-hmac-key ${acme_hmac_key}"
+
+	# call to certbot
 	certbot certonly \
+		--keep-until-expiring \
 		--logs-dir ${log_dir} \
 		--dns-rfc2136 \
 		--dns-rfc2136-credentials "${ddns_temp}" \
-		--dns-rfc2136-propagation-seconds 30 \
+		--dns-rfc2136-propagation-seconds 15 \
 		--preferred-challenges=dns-01 \
 		--server "${acme_server}" \
 		  ${eab_data} \
-		--email "${acme_email}" \
-		-d "$1" \
-		"${cert_alt_names}"
+		--cert-name "$1" \
+		  ${domains} \
+		--email "${acme_email}"
 
 	# si se ha solicitado, copiamos los certificados 
 	# al servidor destino
@@ -307,90 +316,106 @@ do_create () {
 # $1 name of certificate to be deleted
 do_delete () {
 	trace "Enter do_delete( '$1' )"
+
 	# parse sites ini file to retrieve certificate info
 	parse_site "$1"
 	parse_creds "${acme_credentials}"
-	# create temp file with ddns keys
-	ddns_temp="${tmp_dir}/ddns_credentials.$$.ini"
-	get_ddns_creds > "${ddns_temp}"
-	# revoke certificate (not really needed, but...)
-        do_revoke "$1"
-	# and call certbot to remove. On LetsEncrypt remove eab-xxx related vars
-	if [ -n "${eab-kid}" ]; then
-		eab_data="--eab-kid ${acme_kid} --eab-hmac-key ${acme_hmac_key}"
-	fi 
+
+	# create temp file with ddns keys. Notice permissions
+	ddns_temp="${tmp_dir}/ddns_delete.$$.ini"
+	get_ddns_creds > "${ddns_temp}" && chmod 640 "${ddns_temp}"
+
+	# Revoke certificate (not really needed, but...)
+    do_revoke "$1"
+
+	# On LetsEncrypt remove eab-xxx related vars
+	[ -n "${eab-kid}" ] && eab_data="--eab-kid ${acme_kid} --eab-hmac-key ${acme_hmac_key}"
+
+	# and call certbot to remove. 
     certbot delete \
             --logs-dir ${log_dir} \
             --dns-rfc2136 \
-            --dns-rfc2136-credentials "${ddns_credentials}" \
-            --dns-rfc2136-propagation-seconds 30 \
+            --dns-rfc2136-credentials "${ddns_temp}" \
+            --dns-rfc2136-propagation-seconds 15 \
             --preferred-challenges=dns-01 \
             --server "${acme_server}" \
-			"${eab_data}" \
+			  ${eab_data} \
             --email "${acme_email}" \
             --cert-name "$1"
 	
 	# Si install está activado, borramos el certificado en el host
 	[ ${install} -eq 1 ] && remove_certificate "$1"
+
 	# Eliminamos fichero temporal de claves ddns
 	rm -f "${ddns_temp}"
+
 	# finalmente elimina la seccion asociada del fichero de configuración de sites
-	ini_remove_section "${sites_info}" "$1"
+	# o mejor: marcamos la seccion como disable (por si acaso)
+	# ini_remove_section "${sites_info}" "$1"
+	ini_write "${sites_info}" "${1}" "cert_enabled" 0
+
 }
 
 # revoke certificate
 # $1 name of certificate to be revoked
 do_revoke () {
 	trace "Enter do_revoke( '$1' )"
+
 	# parse sites ini file to retrieve certificate info
 	parse_site "$1"
 	parse_creds "${acme_credentials}"
-	# create temp file with ddns keys
-	ddns_temp="${tmp_dir}/ddns_credentials.$$.ini"
-	get_ddns_creds > "${ddns_temp}"
-	# and call certbot to remove. On LetsEncrypt remove eab-xxx related vars
-	if [ -n "${eab-kid}" ]; then
-		eab_data="--eab-kid ${acme_kid} --eab-hmac-key ${acme_hmac_key}"
-	fi 
+	
+	# create temp file with ddns keys with proper perms
+	ddns_temp="${tmp_dir}/ddns_revoke.$$.ini"
+	get_ddns_creds > "${ddns_temp}" && chmod 644 "${ddns_temp}"
+
+	# On LetsEncrypt remove eab-xxx related vars
+	[ -n "${eab-kid}" ] && eab_data="--eab-kid ${acme_kid} --eab-hmac-key ${acme_hmac_key}"
+	
+	# call to certbot
     certbot revoke \
             --logs-dir ${log_dir} \
             --dns-rfc2136 \
-            --dns-rfc2136-credentials "${ddns_credentials}" \
-            --dns-rfc2136-propagation-seconds 30 \
+            --dns-rfc2136-credentials "${ddns_temp}" \
+            --dns-rfc2136-propagation-seconds 15 \
             --preferred-challenges=dns-01 \
             --server "${acme_server}" \
-			"${eab_data}" \
+			  ${eab_data} \
             --email "${acme_email}" \
             --cert-name "$1"
 
-	# disable entry from sites file
-	ini_write "${sites_info}" "$1" "cert_enabled" 0
 	# Eliminamos fichero temporal de claves ddns
 	rm -f "${ddns_temp}"
+
+	# disable entry from sites file
+	ini_write "${sites_info}" "$1" "cert_enabled" 0
 }
 
 # Force certificate renewal
 # $1 name of certificate to be renoved
 do_renove () {
 	trace "Enter do_renove( \"$1\" )"
-    # parse sites ini file to retrieve certificate info
+    
+	# parse sites ini file to retrieve certificate info
     parse_site "$1"
 	parse_creds "${acme_credentials}"
-	# create temp file with ddns keys
-	ddns_temp="${tmp_dir}/ddns_credentials.$$.ini"
-	get_ddns_creds > "${ddns_temp}"
+	
+	# create temp file with ddns keys. Set proper perms
+	ddns_temp="${tmp_dir}/ddns_renove.$$.ini"
+	get_ddns_creds > "${ddns_temp}" && chmod 640 "${ddns_temp}"
+
     # call to certbot. On letsencrypt remove eab- related variables
-	if [ -n "${eab-kid}" ]; then
-		eab_data="--eab-kid ${acme_kid} --eab-hmac-key ${acme_hmac_key}"
-	fi 
+	[ -n "${eab-kid}" ] && eab_data="--eab-kid ${acme_kid} --eab-hmac-key ${acme_hmac_key}"
+
     certbot renew \
+			--force-renewal \
             --logs-dir ${log_dir} \
             --dns-rfc2136 \
-            --dns-rfc2136-credentials "${ddns_credentials}" \
-            --dns-rfc2136-propagation-seconds 30 \
+            --dns-rfc2136-credentials "${ddns_temp}" \
+            --dns-rfc2136-propagation-seconds 15 \
             --preferred-challenges=dns-01 \
             --server "${acme_server}" \
-			"${eab_data}" \
+			  ${eab_data} \
             --email "${acme_email}" \
             --cert-name "$1"
 
@@ -398,8 +423,6 @@ do_renove () {
     # al servidor destino
     [ ${install} -eq 1 ] && install_certificate "$1"
 
-    # si no verboso borramos fichero temporal de configuración ddns
-    [ ${verbose} -eq 0 ] && rm -f "${ddns_credentials}"
 	# Eliminamos fichero temporal de claves ddns
 	rm -f "${ddns_temp}"
 }
@@ -423,8 +446,7 @@ do_renove_all () {
 # #2: 0:disabled 1:enabled
 do_enable () {
 	if ! ini_section_exists "${sites_info}" "$1" ; then
-		error "Certificate '$1' is not declared in ${sites_info}"
-		exit 1
+		die 1 "Certificate '$1' is not declared in ${sites_info}"
 	else
 		ini_write "${sites_info}" "$1" "cert_enabled" "$2"
 	fi
@@ -432,6 +454,7 @@ do_enable () {
 
 # show usage and options
 usage () {
+	echo ""
 	echo "Certificate management with certbot/DNS-01 validation"
 	echo "Version: $Version"
 	echo "Author: $Author"
@@ -467,9 +490,8 @@ mkdir -p "${log_dir}" "${tmp_dir}"
 # Generamos un fichero de bloqueo para evitar ejecucion simulGtanea
 # de este script
 if ! lockfile -r 0 "${lock_file}" ; then
-        echo "Hay un 'certmanager' en ejecucion"
-        echo "Si lo anterior no es correcto, borre el fichero '${lock_file}' y pruebe de nuevo"
-        exit 1
+        error "Hay un 'certmanager' en ejecucion"
+        die 1 "Si lo anterior no es correcto, borre el fichero '${lock_file}' y pruebe de nuevo"
 fi
 # Borramos el fichero de bloqueo al finalizar la ejecucion del programa
 trap 'rm -f ${lock_file}' EXIT
@@ -479,7 +501,7 @@ trap 'rm -f ${lock_file}' EXIT
 while [ "Z$1" != "Z" ]; do
     case "Z$1" in
 	"Z-?" | "Z-h" | "Z--help" ) 
-		usage; exit 0 
+		usage; die 0 
 		;;
 	"Z-v" | "Z--verbose" ) 
 		verbose=1 ; shift 
@@ -488,7 +510,7 @@ while [ "Z$1" != "Z" ]; do
 		verbose=0 ; shift 
 		;;
 	"Z-i" | "Z--install" ) 
-		install=0 ; shift 
+		install=1 ; shift 
 		;;
 	"Z-m" | "Z--mail" ) 
 		shift; mailto=1 ; shift 
@@ -502,46 +524,48 @@ while [ "Z$1" != "Z" ]; do
 		shift; cert_name=$1; shift
 		;;
 	"Z-l" | "Z--list" ) 
-		[ "$action" != "" ] && (echo "Cannot ask for '${action}' and 'list'" >&2; exit 1) 
+		[ "$action" != "" ] && die 1 "Doble comando: '${action}' y 'list'" 
 		action="list"; shift
 		;;
 	"Z-c"  | "Z--create" )
-		[ "$action" != "" ] && (echo "Cannot ask for '${action}' and 'create'" >&2; exit 1) 
+		[ "$action" != "" ] && die 1 "Doble comando '${action}' y 'create'" 
 		action="create"; shift;
 		cert_name=$1; shift;
 		;;
 	"Z-d"  | "Z--delete" )
-		[ "$action" != "" ] && (echo "Cannot ask for '${action}' and 'delete'" >&2; exit 1) 
+		[ "$action" != "" ] && die 1 "Doble comando '${action}' y 'delete'"
 		action="delete"; shift;
 		cert_name=$1; shift;
 		;;
 	"Z-R"  | "Z--revoke" )
-		[ "$action" != "" ] && (echo "Cannot ask for '${action}' and 'revoke'" >&2; exit 1) 
+		[ "$action" != "" ] && die 1 "Doble comando '${action}' y 'revoke'"
 		action="revoke"; shift;
 		cert_name=$1; shift;
 		;;
 	"Z-r"  | "Z--renove" )
-		[ "$action" != "" ] && (echo "Cannot ask for '${action}' and 'renove'" >&2; exit 1) 
+		[ "$action" != "" ] && die 1 "Doble comando '${action}' y 'renove'"
 		action="renove"; shift;
 		cert_name=$1; shift;
 		;;
 	"Z-a"  | "Z--renove-all" )
-		[ "$action" != "" ] && (echo "Cannot ask for '${action}' and 'renove-all" >&2; exit 1) 
+		[ "$action" != "" ] && die 1 "Doble comando '${action}' y 'renove-all"
 		action="renove-all"; shift;
 		;;
+	* )
+		error "CertManager: Parametros incorrectos"
+		usage
+		die 0
     esac
 done
 
 # Verificamos que sea el usuario "root" quien ejecuta el programa
 if [ $UID -ne 0 ]; then
-       echo "Debe ejecutar este script como root" >&2
-       exit 1
+       die 1 "Debe ejecutar este script como root" 
 fi
 
 # check and load .ini file parser library
 if [ ! -f "${ini_parser}" ]; then
-	echo "Ini Parser library file '${ini_parser}' does not exist. Abort" >&2
-	exit 1
+	die 1 "Ini Parser library file '${ini_parser}' does not exist. Abort"
 else
 	# shellcheck disable=SC1090
 	# shellcheck source=/dev/null
@@ -550,17 +574,14 @@ fi
 
 # An action must be requested
 if [ "Z${action}" = "Z" ]; then
-	echo "No action requested. Use '$0 --help' to see options" >&2
-	exit 1;
+	die 1 "No action requested. Use '$0 --help' to see options" 
 fi
 
 # Check for DDNS options and destination host/paths .ini file
 if [ ! -f "$sites_info" ]; then
-	echo "DNS and certs destination info file '$sites_info' does not exist" >&2
-	exit 1
+	die 1 "DNS and certs destination info file '$sites_info' does not exist" 
 elif ! ini_validate "$sites_info" ; then
-	echo "DNS and certs destination info '$sites_info' is not a valid .ini file" >&2
-	exit 1
+	die "DNS and certs destination info '$sites_info' is not a valid .ini file" 
 fi
 
 # Everything seems ok. Check action
@@ -582,6 +603,6 @@ if [ -n "${mailto}" ]; then
 fi
 
 # eso es todo, amigos
-echo "Proceso completado"
+log "Proceso completado"
 rm -f "${lock_file}"
 exit 0

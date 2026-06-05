@@ -45,6 +45,10 @@ Para generar (Opcional) la versión HTML de este documento en la carpeta
 de documentación, es preciso instalar el paquete *md2html*
 > sudo apt install md2html
 
+Para la distribución de los certificados a la máquina destino, se precisa de paquete openssh-client en el equipo donde se instale CertManager. Así mismo el equipo destino
+deberá tener instalado openssh-server y configurado de manera que se permita el acceso sin contraseña, esto es: por clave pública/privada (en el fichero **/root/.ssh/authorized_keys**)
+> sudo apt install ssh 
+
 ### Descarga e instalación
 
 Para instalar la aplicación:
@@ -92,6 +96,53 @@ Usage: ./certmanager.sh options
   -i | --install          Install certificate to (remote) server
                           (default is do not install)
 ```
+### Descripción de las diversas opciones:
+
+***-h -? --help***  
+    Muestra las información de versión y diversas opciones
+
+***-v --verbose***       
+    Vuelca la información de ejecución tanto en el fichero de logs como en pantalla
+
+***-q --quiet***  
+    No presenta mensajes en pantalla (salvo error en la ejecución)
+
+***-l --list***  
+    Muestra la lista de certificados registrados en el fichero sites.ini, así como
+    su estado habilitado/deshabilitado
+    Si se incluye la opción **--verbose** muestra además la información del certificado (si está habilitado)
+
+***-c --create <nombre>***  
+    Crea el certificado con el nombre indicado. Dicho nombre debe corresponder a una sección del fichero **sites.ini**  
+    Si el certificado está creado y está próximo (30 días o menos) a expirar, se procede a la renovación de éste  
+    Si el certificado está marcado como **disabled** en el fichero **sites.ini** , el proceso de creación/renovación no se realiza. No obstante, si se especifica **--install**
+    y el certificado ya existe, se procederá a su instalación en la máquina destino
+
+***-d --delete <nombre>***  
+    Borra el certificado dado, y lo marca como **disabled** en el fichero de configuración  
+    No se revoca el certificado, por lo que salvo que se indique --install, el certificado
+    seguirá siendo válido hasta que caduque  
+    Si se indica la opción --install, se procede también al borrado en el equipo destino  
+
+***-R --revoke <nombre>***  
+    Procede a la revocación del certificado, y lo marca como **disabled** en el fichero de configuración **sites.ini**
+
+***-E --enable -D --disable <nombre>***  
+    Procede a habilitar/deshabilitar la entrada correspondiente en el fichero **sites.ini**
+
+***-r --renove <nombre>***  
+    Si el certificado está marcado como **enabled** se procede a su renovación, con independencia de la fecha de expiración
+
+***-a --renove-all***  
+    Recorre la lista de certificados marcados como **enabled** en el fichero de configuración, y procede a su renovación si están proximos a expirar ( o ya están expirados )
+
+***-m --mail <dest>***  
+    Envia por correo electrónico al destinatario indicado el fichero de registro de ejecución de la aplicación  
+    Para que este envío tenga lugar, deberá tener la aplicación **mail** instalada en el equipo, así como estar correctamente configurado el envío de correo
+
+***-i --install***  
+    Se procede a la distribución de los certificados a su máquina destino, tal y como se indica en el fichero **sites.ini**
+    La distribución se realiza mediante el comando **ssh** por lo que el equipo destino deberá tener habilitado el servicio **sshd** y permitir el acceso por pares de claves publico/privada. ( fichero **authorized_keys**)
 
 ## Configuración
 
@@ -152,8 +203,9 @@ que contiene las diversas claves de acceso a los distintos servidores/zonas DNS 
 
 El fichero **ddns-keys.ini** se genera con la utilidad *tsig2ini.sh*, a partir de la
 salida del comando *tsig-keygen*, utilizado para la generación de claves
-en el DNS
-
+en el DNS  
+Uso: **tsig2ini.sh dnsipaddr dns-keyfile.conf**
+     
 Ejemplo de utilización:
 - Generar clave y guardar en el servidor dns
 
