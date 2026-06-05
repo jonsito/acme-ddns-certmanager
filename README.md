@@ -370,7 +370,7 @@ tal que sigue:
 > crontab -e
 ```
 ...
-0 6 * * 0 /usr/local/bin/certmanager.sh --renove-all --expire 30 --install --mail <certadmin@example.com>
+0 6 * * 0 /usr/local/bin/certmanager.sh --renove-all --install --mail <certadmin@example.com>
 ...
 ```
 **NOTA** certbot instala por defecto un timer para la renovación automática de certificados. Es preciso deshabilitar este timer para poder utilizar correctamente CertManager.
