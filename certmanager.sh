@@ -177,7 +177,7 @@ parse_site () {
 # $1: user section in the .ini file to read credentials from
 parse_creds () {
 	trace "enter parse_creds ('$1')"
-	user=$1
+	user="${1}"
     if [ ! -f "$acme_creds" ]; then
 		die 1 "ACME EAB credentials file '$acme_creds' does not exist" 
     elif ! ini_validate "$acme_creds" ; then
@@ -186,6 +186,7 @@ parse_creds () {
     elif ! (ini_list_sections "$acme_creds" | grep -q "$user") ; then
 		die 1 "User '$user' is not declared in '$acme_creds'"
     else
+		echo "User: $user"
 		# finalmente leemos credenciales
 		acme_kid=$(ini_read "$acme_creds" "$user" "acme_kid")
 		acme_hmac_key=$(ini_read "$acme_creds" "$user" "acme_hmac_key")
@@ -276,7 +277,11 @@ do_create () {
 	trace "Enter do_create( '$1' )"
 
 	# parse sites ini file to retrieve certificate and credentials
-	parse_site "$1" 
+	parse_site "$1"
+	if [ "${cert_enabled}" -eq 0 ]; then
+		error "Create: El certificado \"${1}\" está deshabilitado. "
+		return
+	fi 
 	parse_creds "${acme_credentials}"
 	
 	# indicamos el CN y los SubjectAlternateNames
@@ -319,6 +324,10 @@ do_delete () {
 
 	# parse sites ini file to retrieve certificate info
 	parse_site "$1"
+	if [ "${cert_enabled}" -eq 0 ]; then
+		error "Delete: El certificado \"${1}\" está deshabilitado. "
+		return
+	fi 
 	parse_creds "${acme_credentials}"
 
 	# create temp file with ddns keys. Notice permissions
@@ -363,6 +372,10 @@ do_revoke () {
 
 	# parse sites ini file to retrieve certificate info
 	parse_site "$1"
+	if [ "${cert_enabled}" -eq 0 ]; then
+		error "Revoke: El certificado \"${1}\" está deshabilitado. "
+		return
+	fi 
 	parse_creds "${acme_credentials}"
 	
 	# create temp file with ddns keys with proper perms
@@ -398,6 +411,10 @@ do_renove () {
     
 	# parse sites ini file to retrieve certificate info
     parse_site "$1"
+	if [ "${cert_enabled}" -eq 0 ]; then
+		error "Renove: El certificado \"${1}\" está deshabilitado. "
+		return
+	fi 
 	parse_creds "${acme_credentials}"
 	
 	# create temp file with ddns keys. Set proper perms
