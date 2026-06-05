@@ -122,7 +122,7 @@ parse_site () {
 	fi
 	# miramos si esta sección está habilitada para procesar o no el certificado. 
 	# Si no lo está, no es un error, pero no se procesa
-	cert_enabled=$(ini_read "${sites_info}" "$1" "cert_enabled" ) >&1
+	cert_enabled=$(ini_read "${sites_info}" "$1" "cert_enabled" )
 	if [ "${cert_enabled}" -ne 1 ];then
 		log "Certificate \"$1\" is not enabled"
 		return 2
@@ -301,7 +301,7 @@ do_create () {
 		--logs-dir ${log_dir} \
 		--dns-rfc2136 \
 		--dns-rfc2136-credentials "${ddns_temp}" \
-		--dns-rfc2136-propagation-seconds 15 \
+		--dns-rfc2136-propagation-seconds 30 \
 		--preferred-challenges=dns-01 \
 		--server "${acme_server}" \
 		  ${eab_data} \
@@ -345,7 +345,7 @@ do_delete () {
             --logs-dir ${log_dir} \
             --dns-rfc2136 \
             --dns-rfc2136-credentials "${ddns_temp}" \
-            --dns-rfc2136-propagation-seconds 15 \
+            --dns-rfc2136-propagation-seconds 30 \
             --preferred-challenges=dns-01 \
             --server "${acme_server}" \
 			  ${eab_data} \
@@ -390,7 +390,7 @@ do_revoke () {
             --logs-dir ${log_dir} \
             --dns-rfc2136 \
             --dns-rfc2136-credentials "${ddns_temp}" \
-            --dns-rfc2136-propagation-seconds 15 \
+            --dns-rfc2136-propagation-seconds 30 \
             --preferred-challenges=dns-01 \
             --server "${acme_server}" \
 			  ${eab_data} \
@@ -429,7 +429,7 @@ do_renove () {
             --logs-dir ${log_dir} \
             --dns-rfc2136 \
             --dns-rfc2136-credentials "${ddns_temp}" \
-            --dns-rfc2136-propagation-seconds 15 \
+            --dns-rfc2136-propagation-seconds 30 \
             --preferred-challenges=dns-01 \
             --server "${acme_server}" \
 			  ${eab_data} \
@@ -453,7 +453,8 @@ do_renove_all () {
 		if [ "$a" -eq 0 ]; then
 			log "Certificate '${entry}' is disabled. Skip"
 		else
-			do_renove "$entry"
+			# use create instead to remove, as renove is forced 
+			do_create "$entry"
 		fi
 	done
 }
