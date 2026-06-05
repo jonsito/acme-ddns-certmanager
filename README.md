@@ -23,7 +23,7 @@ Las operaciones se realizan consultando un ficheros de configuración de certifi
 - install.sh
     Programa de (des)instalación de la aplicación
 - etc/acme_creds.ini
-    Fichero de credenciales de acceso del usuario ACME
+    Fichero de credenciales de acceso ACME de los diversos usuarios 
 - etc/ddns_keys.ini
     Fichero de configuración de acceso por DDNS a los diferentes servidores
     de DNS
@@ -65,7 +65,7 @@ Para instalar la aplicación:
 
 - Como usuario "root" ejecutar *install.sh*
 
-- Una vez instalado, seguir las instrucciones para personalizar los diversos ficheros de configuración, así como configurar DNS para que permita validación DNS-01
+- Una vez instalado, seguir las instrucciones para personalizar los diversos ficheros de configuración, así como configurar DNS para que permita validación DNS-01  
 **IMPORTANTE** los ficheros bajo la carpeta /etc/certmanager deben estar con permisos root:root y protegidos contra lectura/escritura pública
 
 - La instalación de certbot programa automáticamente un timer para ejecutar dicha aplicación de manera periódica. Puesto que en este caso certbot se ejecuta desde CertManager, hay que desactivar dicho timer:
