@@ -47,7 +47,8 @@ log_file="${log_dir}/cert_manager.$$.log"
 lock_file=${tmp_dir}/certmanager.lock
 
 # Valores por defecto
-verbose=0	# show log in console
+verbose=""		# show log in console
+quiet="--quiet" # suppress certbot output to console
 action=""	# Action to perform when this script is executed
 mailto=""	# on execution send log to provided mail address
 install=0	# re-distribute new created certificates
@@ -82,7 +83,7 @@ trace() {
 # send message to log file. When verbose send also to console
 log () {
 	echo "$*" >>${log_file}
-	[ ${verbose} -eq 1 ] && echo "$*" >&2
+	[ -n "${verbose}" ] && echo "$*" >&2
 }
 
 # send message to log file AND console
@@ -96,7 +97,11 @@ error () {
 # $2 mensaje de error
 die () {
 	exitcode=$1; shift
+	# en caso de error, lo guardamos en el fichero de logs
 	[ "${exitcode}" -ne 0 ] && error "$*"
+	# si error o verbose no borramos fichero de logs
+	if [ -n "${verbose}" ] || [ "${exitcode}" -eq 0 ] ; then  rm -f "${log_file}"; fi
+	# limpiamos fichero de lock.
 	rm -f "${lock_file}"
 	exit "${exitcode}"
 }
@@ -264,7 +269,7 @@ do_list () {
 		a=$(ini_read "${sites_info}" "$entry" "cert_enabled") 
 		[[ $a -eq 0 ]] && echo "${entry} -> disabled" || echo "${entry} -> enabled"
 		# en modo verboso presentamos info de los certificados enabled
-		if [ ${verbose} -eq 1 ]; then
+		if [ -z "${verbose}" ]; then
 			[ "$a" -eq 0 ] && continue
 			certbot certificates 
 		fi
@@ -297,6 +302,7 @@ do_create () {
 
 	# call to certbot
 	certbot certonly \
+		  ${quiet} \
 		--keep-until-expiring \
 		--logs-dir ${log_dir} \
 		--dns-rfc2136 \
@@ -342,15 +348,16 @@ do_delete () {
 
 	# and call certbot to remove. 
     certbot delete \
-            --logs-dir ${log_dir} \
-            --dns-rfc2136 \
-            --dns-rfc2136-credentials "${ddns_temp}" \
-            --dns-rfc2136-propagation-seconds 30 \
-            --preferred-challenges=dns-01 \
-            --server "${acme_server}" \
-			  ${eab_data} \
-            --email "${acme_email}" \
-            --cert-name "$1"
+		  ${quiet} \
+        --logs-dir ${log_dir} \
+        --dns-rfc2136 \
+        --dns-rfc2136-credentials "${ddns_temp}" \
+        --dns-rfc2136-propagation-seconds 30 \
+        --preferred-challenges=dns-01 \
+        --server "${acme_server}" \
+		  ${eab_data} \
+        --email "${acme_email}" \
+        --cert-name "$1"
 	
 	# Si install está activado, borramos el certificado en el host
 	[ ${install} -eq 1 ] && remove_certificate "$1"
@@ -387,15 +394,16 @@ do_revoke () {
 	
 	# call to certbot
     certbot revoke \
-            --logs-dir ${log_dir} \
-            --dns-rfc2136 \
-            --dns-rfc2136-credentials "${ddns_temp}" \
-            --dns-rfc2136-propagation-seconds 30 \
-            --preferred-challenges=dns-01 \
-            --server "${acme_server}" \
-			  ${eab_data} \
-            --email "${acme_email}" \
-            --cert-name "$1"
+		  ${quiet} \
+        --logs-dir ${log_dir} \
+        --dns-rfc2136 \
+        --dns-rfc2136-credentials "${ddns_temp}" \
+        --dns-rfc2136-propagation-seconds 30 \
+        --preferred-challenges=dns-01 \
+        --server "${acme_server}" \
+		  ${eab_data} \
+        --email "${acme_email}" \
+        --cert-name "$1"
 
 	# Eliminamos fichero temporal de claves ddns
 	rm -f "${ddns_temp}"
@@ -425,16 +433,17 @@ do_renove () {
 	[ -n "${eab-kid}" ] && eab_data="--eab-kid ${acme_kid} --eab-hmac-key ${acme_hmac_key}"
 
     certbot renew \
-			--force-renewal \
-            --logs-dir ${log_dir} \
-            --dns-rfc2136 \
-            --dns-rfc2136-credentials "${ddns_temp}" \
-            --dns-rfc2136-propagation-seconds 30 \
-            --preferred-challenges=dns-01 \
-            --server "${acme_server}" \
-			  ${eab_data} \
-            --email "${acme_email}" \
-            --cert-name "$1"
+		  ${quiet} \
+		--force-renewal \
+        --logs-dir ${log_dir} \
+        --dns-rfc2136 \
+        --dns-rfc2136-credentials "${ddns_temp}" \
+        --dns-rfc2136-propagation-seconds 30 \
+        --preferred-challenges=dns-01 \
+        --server "${acme_server}" \
+		  ${eab_data} \
+        --email "${acme_email}" \
+        --cert-name "$1"
 
     # si se ha solicitado, copiamos los certificados 
     # al servidor destino
@@ -482,8 +491,7 @@ usage () {
 	echo "Usage: $0 options"
 	echo "  Options:"
 	echo "  -? | -h | --help        show usage and exit"
-	echo "  -v | --verbose          Verbose log to console"
-	echo "  -q | --quiet            Do not send output to console"
+	echo "  -v | --verbose          Send certmanager/certbot logs to console (def: don't)"
 	echo "  -l | --list             List current certificates"
 	echo "  -c | --create <name>    Create/renove certificate <name>"
 	echo "  -d | --delete <name>    Delete certificate <name>"
@@ -522,10 +530,14 @@ while [ "Z$1" != "Z" ]; do
 		usage; die 0 
 		;;
 	"Z-v" | "Z--verbose" ) 
-		verbose=1 ; shift 
+		verbose="--verbose"
+		quiet=""
+		shift
 		;;
-	"Z-q" | "Z--quiet" ) 
-		verbose=0 ; shift 
+	"Z-q" | "Z--quiet" ) # default option, not really needed
+		verbose="" ;
+		quiet="--quiet"
+		shift
 		;;
 	"Z-i" | "Z--install" ) 
 		install=1 ; shift 
